@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+# Each user's own settings; the shipped defaults are config.default.toml.
+config.toml
+# Personal development notes (local only).
+DEV_NOTES.md

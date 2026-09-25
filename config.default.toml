@@ -1,0 +1,80 @@
+# LMU Voice Chat default settings. Don't edit this file: on first run the app
+# copies it to config.toml, and that's where your settings go. Anything missing
+# from config.toml falls back to the value here. Restart the app after editing.
+
+# ---- Push-to-talk ------------------------------------------------------------
+# The button you hold while speaking. Easiest way to set it: run
+#   run.bat --bind
+# and press the key or wheel button you want. Or write it by hand:
+#   "key:<name>"              a keyboard key, e.g. "key:f9", "key:right ctrl", "key:caps lock"
+#   "joy:<device>:<button>"   a wheel / button box / joystick button. <device> is any part
+#                             of the controller's name (see `run.bat --list-controllers`);
+#                             leave it empty ("joy::5") to use the first controller found.
+#                             Buttons count from 0.
+ptt_button = "key:f9"
+
+[chat]
+# The key that opens the chat box. "auto" reads LMU's own "Realtime Chat" key
+# binding while the game runs. Or name a key ("enter", "t"), or leave empty ("")
+# if you open chat yourself.
+open_key = "auto"
+# The key that sends the message.
+send_key = "enter"
+# false = type the message but leave it unsent so you can check it first.
+auto_send = true
+# LMU's chat box holds this many characters (measured with --length-test).
+# Longer messages are split at word boundaries and sent as several messages;
+# with auto_send = false only the first part is typed.
+max_length = 119
+# Wait after opening chat before typing. Raise it if the first letters go missing.
+open_delay_ms = 150
+# How long each key is held down. Raise it if the game misses key presses.
+key_hold_ms = 30
+# Pause between typed characters.
+char_delay_ms = 5
+# "unicode" types any character directly. Switch to "scancode" if the chat box
+# opens but stays empty; it presses real keys, limited to your keyboard layout.
+text_mode = "unicode"
+# Only type when the focused window's title contains `window_title`, so a stray
+# press never types into another program. Use --any-window to test in Notepad.
+only_when_focused = true
+window_title = "Le Mans Ultimate"
+
+[speech]
+# Whisper model: tiny.en, base.en, small.en, medium.en (bigger = more accurate,
+# slower). Drop the ".en" and set language = "" for other languages.
+model = "small.en"
+language = "en"
+# "cpu", or "cuda" if you have an NVIDIA GPU with CUDA 12 + cuDNN installed.
+device = "cpu"
+compute_type = "int8"
+# Words Whisper should expect. Add driver names and team names you use often.
+# Whisper only reads the last 223 tokens of this (roughly 150 words) and drops
+# the start of anything longer; the app warns at startup if that happens.
+# The default list is 158 tokens. The trailing backslashes join the lines into one string.
+vocabulary = """\
+  Hyper, LMP2, LMP3, GT3, LMGT3, GTE, pit, box, blue, yellow, flag, \
+  sorry, punt, apologies, thanks, good race, GG. \
+  Toyota, Yota, Ferrari, Fezza, Porsche, Porker, Cadillac, Caddy, Peugeot, Pug, \
+  BMW, Beemer, Bimmer, Alpine, Lamborghini, Lambo, Aston Martin, Aston, \
+  Genesis, Isotta Fraschini, Isotta, Glickenhaus, Glick, Vanwall, \
+  Corvette, Vette, Chevy, Ford, Mustang, Lexus, Mercedes-AMG, Merc, AMG, \
+  McLaren, Macca, Oreca, Ligier, Duqueine, Ginetta, Adess.\
+"""
+# Add the names of the drivers in your session to the vocabulary, read from
+# LMU's official shared memory each time you speak (so late joiners count).
+# They fill whatever space the vocabulary above leaves, nearest on track first;
+# shorten the vocabulary to fit more. Check with `run.bat --list-drivers`.
+driver_names = true
+# Microphone: empty = Windows default. Otherwise part of its name or its number
+# from `run.bat --list-mics`.
+microphone = ""
+# Presses shorter than this are ignored.
+min_seconds = 0.3
+# Short beeps when recording starts and stops.
+beep = true
+
+[corrections]
+# Words Whisper keeps mishearing: "what it wrote" = "what you meant".
+# Whole words only, any case. Quote phrases with spaces: "blue flak" = "blue flag".
+"Mac" = "Merc"

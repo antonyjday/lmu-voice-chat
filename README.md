@@ -68,3 +68,28 @@ The app doesn't touch the game's process or memory. It types with standard
 Windows key presses, like a macro keyboard, and reads driver names from
 `LMU_Data`, the shared memory LMU publishes for tools like this. It has been
 used in online lobbies with Easy Anti-Cheat running.
+
+## Credits and licences
+
+This app builds on:
+
+- [OpenAI Whisper](https://github.com/openai/whisper) speech recognition (MIT),
+  run with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and
+  [CTranslate2](https://github.com/OpenNMT/CTranslate2) (MIT), using the
+  [Systran/faster-whisper-small.en](https://huggingface.co/Systran/faster-whisper-small.en)
+  model conversion (MIT)
+- [Silero VAD](https://github.com/snakers4/silero-vad) to skip silence (MIT)
+- [sounddevice](https://github.com/spatialaudio/python-sounddevice) (MIT),
+  [keyboard](https://github.com/boppreh/keyboard) (MIT),
+  [pygame](https://www.pygame.org) (LGPL 2.1),
+  [pystray](https://github.com/moses-palmer/pystray) (LGPLv3),
+  [Pillow](https://python-pillow.org) (MIT-CMU),
+  [tomlkit](https://github.com/python-poetry/tomlkit) (MIT) and
+  [NumPy](https://numpy.org) (BSD)
+
+None of these are included in this repository: `setup.bat` installs them from
+PyPI, and the speech model downloads from Hugging Face on first start. Each is
+covered by its own licence.
+
+Not affiliated with or endorsed by Studio 397 or Motorsport Games. Le Mans
+Ultimate is their product.

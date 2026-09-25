@@ -1,11 +1,12 @@
 # LMU Voice Chat default settings. Don't edit this file: on first run the app
 # copies it to config.toml, and that's where your settings go. Anything missing
-# from config.toml falls back to the value here. Restart the app after editing.
+# from config.toml falls back to the value here. The common settings are also in
+# the tray icon's right-click menu. Edits to config.toml apply when you save.
 
 # ---- Push-to-talk ------------------------------------------------------------
-# The button you hold while speaking. Easiest way to set it: run
-#   run.bat --bind
-# and press the key or wheel button you want. Or write it by hand:
+# The button you hold while speaking. Easiest way to set it: right-click the
+# tray icon > "Set push-to-talk button...", then press the key or wheel button.
+# Or write it by hand:
 #   "key:<name>"              a keyboard key, e.g. "key:f9", "key:right ctrl", "key:caps lock"
 #   "joy:<device>:<button>"   a wheel / button box / joystick button. <device> is any part
 #                             of the controller's name (see `run.bat --list-controllers`);

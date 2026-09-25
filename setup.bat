@@ -20,5 +20,5 @@ echo Installing dependencies ...
 
 echo.
 echo Setup done. Next:
-echo     run.bat --bind     press the key or wheel button to use for push-to-talk
-echo     run.bat            start ^(the first start downloads the speech model, about 250 MB^)
+echo     run.bat     start. It runs in the system tray: right-click its icon to set your
+echo                 push-to-talk button. The first start downloads the speech model ^(about 250 MB^).

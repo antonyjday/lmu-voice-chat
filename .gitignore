@@ -4,3 +4,5 @@ __pycache__/
 config.toml
 # Personal development notes (local only).
 DEV_NOTES.md
+# Written by the app each run.
+lmu_chat.log

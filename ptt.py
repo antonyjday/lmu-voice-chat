@@ -13,6 +13,8 @@ os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import keyboard  # noqa: E402
 import pygame  # noqa: E402
 
+CANCEL_KEY = "esc"  # cancels capture()
+
 
 @dataclass
 class Binding:
@@ -25,6 +27,11 @@ class Binding:
         if self.kind == "key":
             return f"key:{self.key}"
         return f"joy:{self.device}:{self.button}"
+
+    def describe(self) -> str:
+        if self.kind == "key":
+            return self.key.upper() if len(self.key) <= 3 else self.key.title()
+        return f"{self.device or 'controller'} button {self.button}"
 
 
 def parse_binding(text: str) -> Binding:
@@ -57,92 +64,124 @@ def list_controllers():
     ]
 
 
-def _find_controller(device: str):
-    for i in range(pygame.joystick.get_count()):
-        joy = pygame.joystick.Joystick(i)
-        if device.lower() in joy.get_name().lower():
-            return joy
-    return None
-
-
 class PushToTalk:
-    """Calls on_press when the bound button goes down and on_release when it comes up."""
+    """Calls on_press when the bound button goes down and on_release when it comes up.
 
-    def __init__(self, binding: Binding, on_press, on_release):
-        self.binding = binding
+    The binding can be changed while running, and capture() records a new one.
+    All pygame work happens on one thread: SDL only reports controllers to the
+    thread that initialised it, so polling and capturing must share it.
+    """
+
+    def __init__(self, on_press, on_release, on_status=print):
         self._on_press = on_press
         self._on_release = on_release
+        self._on_status = on_status
+        self._lock = threading.RLock()
+        self._binding: Binding | None = None
+        self._remove_key_hook = None
+        self._paused = False
         self._held = False
+        self._capture: tuple[threading.Event, list] | None = None
+        self._last_status = None
+        threading.Thread(target=self._controller_loop, daemon=True).start()
 
-    def start(self):
-        if self.binding.kind == "key":
-            keyboard.hook_key(self.binding.key, self._on_key)
-        else:
-            threading.Thread(target=self._poll_controller, daemon=True).start()
+    @property
+    def binding(self) -> Binding | None:
+        return self._binding
+
+    def set_binding(self, binding: Binding | None):
+        with self._lock:
+            self._set_held(False)
+            if self._remove_key_hook:
+                self._remove_key_hook()
+                self._remove_key_hook = None
+            self._binding = binding
+            self._last_status = None
+            if binding and binding.kind == "key":
+                self._remove_key_hook = keyboard.hook_key(binding.key, self._on_key)
+
+    @property
+    def paused(self) -> bool:
+        return self._paused
+
+    @paused.setter
+    def paused(self, value: bool):
+        with self._lock:
+            self._paused = value
+            self._set_held(False)
+
+    def capture(self, timeout: float = 30) -> Binding | None:
+        """Waits for the next key or controller button press and returns it as a binding.
+        Push-to-talk is ignored meanwhile. None on timeout or when Escape is pressed."""
+        done, result = threading.Event(), []
+
+        def on_key(event):
+            if event.event_type == keyboard.KEY_DOWN and not done.is_set():
+                if event.name.lower() != CANCEL_KEY:
+                    result.append(Binding("key", key=event.name.lower()))
+                done.set()
+
+        with self._lock:
+            self._set_held(False)
+            self._capture = (done, result)
+        hook = keyboard.hook(on_key)
+        try:
+            done.wait(timeout)
+        finally:
+            keyboard.unhook(hook)
+            with self._lock:
+                self._capture = None
+        return result[0] if result else None
+
+    def _status(self, message: str):
+        if message != self._last_status:
+            self._last_status = message
+            self._on_status(message)
 
     def _set_held(self, held: bool):
-        if held == self._held:
-            return
-        self._held = held
-        (self._on_press if held else self._on_release)()
+        with self._lock:
+            if held and (self._paused or self._capture):
+                return
+            if held == self._held:
+                return
+            self._held = held
+            (self._on_press if held else self._on_release)()
 
     def _on_key(self, event):
         # Auto-repeat sends many "down" events while held; _set_held ignores them.
         self._set_held(event.event_type == keyboard.KEY_DOWN)
 
-    def _poll_controller(self):
+    def _controller_loop(self):
         _init_controllers()
-        joy = None
-        warned = False
+        joysticks = {}  # instance id -> Joystick; SDL announces existing ones at startup
         while True:
-            for event in pygame.event.get():
-                if event.type in (pygame.JOYDEVICEADDED, pygame.JOYDEVICEREMOVED):
-                    joy = None
-            if joy is None:
-                self._set_held(False)
-                joy = _find_controller(self.binding.device)
-                if joy is None:
-                    if not warned:
-                        print(f'Waiting for controller matching "{self.binding.device}"...')
-                        warned = True
-                    time.sleep(1)
-                    continue
-                if self.binding.button >= joy.get_numbuttons():
-                    raise SystemExit(
-                        f"{joy.get_name()} has {joy.get_numbuttons()} buttons; "
-                        f"button {self.binding.button} does not exist. Run --bind."
-                    )
-                print(f"Push-to-talk: {joy.get_name()}, button {self.binding.button}")
-                warned = False
-            try:
-                self._set_held(bool(joy.get_button(self.binding.button)))
-            except pygame.error:
-                joy = None
-            time.sleep(0.01)
-
-
-def capture_binding(timeout: float = 30) -> Binding | None:
-    """Waits for the next key or controller button press and returns it as a binding."""
-    _init_controllers()
-    controllers = {}
-    captured = []
-
-    def on_key(event):
-        if event.event_type == keyboard.KEY_DOWN and not captured:
-            captured.append(Binding("key", key=event.name.lower()))
-
-    hook = keyboard.hook(on_key)
-    try:
-        deadline = time.monotonic() + timeout
-        while not captured and time.monotonic() < deadline:
             for event in pygame.event.get():
                 if event.type == pygame.JOYDEVICEADDED:
                     joy = pygame.joystick.Joystick(event.device_index)
-                    controllers[joy.get_instance_id()] = joy
-                elif event.type == pygame.JOYBUTTONDOWN and not captured:
-                    joy = controllers[event.instance_id]
-                    captured.append(Binding("joy", device=joy.get_name(), button=event.button))
+                    joysticks[joy.get_instance_id()] = joy
+                elif event.type == pygame.JOYDEVICEREMOVED:
+                    joysticks.pop(event.instance_id, None)
+                elif event.type == pygame.JOYBUTTONDOWN:
+                    capture, joy = self._capture, joysticks.get(event.instance_id)
+                    if capture and joy and not capture[0].is_set():
+                        capture[1].append(Binding("joy", device=joy.get_name(), button=event.button))
+                        capture[0].set()
+            binding = self._binding
+            if binding and binding.kind == "joy":
+                self._poll(binding, joysticks.values())
             time.sleep(0.01)
-    finally:
-        keyboard.unhook(hook)
-    return captured[0] if captured else None
+
+    def _poll(self, binding: Binding, joysticks):
+        joy = next((j for j in joysticks if binding.device.lower() in j.get_name().lower()), None)
+        if joy is None:
+            self._set_held(False)
+            self._status(f'Waiting for controller matching "{binding.device}"')
+        elif binding.button >= joy.get_numbuttons():
+            self._set_held(False)
+            self._status(f"{joy.get_name()} has no button {binding.button}; set push-to-talk again")
+        else:
+            self._status(f"Push-to-talk: {joy.get_name()}, button {binding.button}")
+            try:
+                self._set_held(bool(joy.get_button(binding.button)))
+            except pygame.error:
+                self._set_held(False)

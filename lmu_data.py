@@ -8,6 +8,7 @@ stall it; instead a read is repeated until two copies agree.
 """
 import ctypes
 import json
+import math
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,9 +55,9 @@ class VehicleScoringInfoV01(ctypes.Structure):
         ("mCurSector2", ctypes.c_double),
         ("mNumPitstops", ctypes.c_short),
         ("mNumPenalties", ctypes.c_short),
-        ("mIsPlayer", ctypes.c_bool),
+        ("mIsPlayer", ctypes.c_ubyte),  # bool, read as a byte so _check can insist on 0 or 1
         ("mControl", ctypes.c_byte),
-        ("mInPits", ctypes.c_bool),
+        ("mInPits", ctypes.c_ubyte),  # bool, as above
         ("mPlace", ctypes.c_ubyte),
         ("mVehicleClass", ctypes.c_char * 32),
         ("mTimeBehindNext", ctypes.c_double),
@@ -216,27 +217,65 @@ def _copy() -> SharedMemoryHead | None:
         kernel32.CloseHandle(handle)
 
 
-def _parse(head: SharedMemoryHead) -> Session:
+class LayoutMismatch(Exception):
+    """The shared memory doesn't look like the layout above; a game update probably changed it."""
+
+
+def _check(head: SharedMemoryHead):
+    """Raises LayoutMismatch if the data can't be right. A shifted layout puts arbitrary
+    bytes into fields that only ever hold a few values (bools, sector, control), so these
+    checks catch it instead of feeding garbage names to Whisper."""
     info = head.scoringInfo
-    count = max(0, min(info.mNumVehicles, MAX_VEHICLES))
+    if not 0 <= info.mNumVehicles <= MAX_VEHICLES:
+        raise LayoutMismatch(f"vehicle count {info.mNumVehicles}")
+    if not (math.isfinite(info.mLapDist) and 0 <= info.mLapDist < 100_000):
+        raise LayoutMismatch(f"track length {info.mLapDist}")
+    vehicles = head.vehScoringInfo[:info.mNumVehicles]
+    for v in vehicles:
+        name = _text(v.mDriverName)
+        if (v.mIsPlayer not in (0, 1) or v.mInPits not in (0, 1) or not -1 <= v.mControl <= 3
+                or not 0 <= v.mSector <= 2 or not 0 <= v.mFinishStatus <= 3
+                or not math.isfinite(v.mLapDist) or not name.isprintable()):
+            raise LayoutMismatch(f"implausible vehicle data for {name!r}")
+    if sum(v.mIsPlayer for v in vehicles) > 1:
+        raise LayoutMismatch("more than one player vehicle")
+    if vehicles:  # with cars on track there must be a track, and places are unique
+        track = _text(info.mTrackName)
+        if not track or not track.isprintable() or info.mLapDist <= 0:
+            raise LayoutMismatch(f"track {track!r}, length {info.mLapDist}")
+        places = [v.mPlace for v in vehicles if v.mPlace]
+        if len(set(places)) != len(places) or max(places, default=0) > len(vehicles):
+            raise LayoutMismatch(f"places {places}")
+
+
+def _parse(head: SharedMemoryHead) -> Session:
+    _check(head)
+    info = head.scoringInfo
     drivers = [
-        Driver(_text(v.mDriverName), v.mPlace, v.mLapDist, v.mIsPlayer)
-        for v in head.vehScoringInfo[:count]
+        Driver(_text(v.mDriverName), v.mPlace, v.mLapDist, bool(v.mIsPlayer))
+        for v in head.vehScoringInfo[:info.mNumVehicles]
     ]
     return Session(_text(info.mTrackName), info.mLapDist, [d for d in drivers if d.name])
 
 
 def read_session(attempts: int = 3) -> Session | None:
-    """The current session, or None if LMU isn't running. Retries if the game was mid-write."""
-    previous = None
+    """The current session, or None if LMU isn't running. Retries if the game was mid-write.
+    Raises LayoutMismatch if every attempt fails the checks."""
+    previous, mismatch = None, None
     for _ in range(attempts):
         head = _copy()
         if head is None:
             return None
-        session = _parse(head)
+        try:
+            session = _parse(head)
+        except LayoutMismatch as e:  # possibly a torn read; try again
+            mismatch = e
+            continue
         if session == previous:
             return session
         previous = session
+    if previous is None:
+        raise mismatch
     return previous
 
 

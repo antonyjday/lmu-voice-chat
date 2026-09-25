@@ -186,6 +186,7 @@ class VoiceChat:
         self.chat = config["chat"]
         self.speech = config["speech"]
         self.any_window = any_window
+        self.names_problem = None  # last driver-names warning shown, so it isn't repeated
         self.jobs = queue.Queue()
         # Whole words, any case: "Mac" = "Merc" fixes "mac" and "Mac's" but not "Macca".
         self.corrections = [
@@ -214,6 +215,20 @@ class VoiceChat:
         elif self.speech["driver_names"]:
             print(f"  vocabulary uses {used} of {self.prompt_limit} prompt tokens; driver names get the rest")
 
+    def warn_names(self, problem: Exception | None):
+        """Reports a driver-names problem once, not on every message, and when it clears."""
+        text = str(problem) if problem else None
+        if text == self.names_problem:
+            return
+        if isinstance(problem, lmu_data.LayoutMismatch):
+            print(f"  warning: skipping driver names; LMU's shared memory doesn't match the expected"
+                  f" layout ({problem}). A game update may have changed it.")
+        elif problem:
+            print(f"  warning: skipping driver names: {problem!r}")
+        else:
+            print("  driver names are readable again")
+        self.names_problem = text
+
     def build_prompt(self) -> tuple[str, int]:
         """The vocabulary plus as many driver names as fit, nearest on track first."""
         vocab = self.speech["vocabulary"].strip()
@@ -222,8 +237,9 @@ class VoiceChat:
         try:
             session = lmu_data.read_session()
         except Exception as e:  # never lose a message over this
-            print(f"  could not read driver names: {e!r}")
+            self.warn_names(e)
             return vocab, 0
+        self.warn_names(None)
         prompt, used = vocab, 0
         for name in lmu_data.names_nearest_first(session) if session else []:
             candidate = f"{prompt}, {name}" if used else f"{vocab} Drivers: {name}".strip()
@@ -300,7 +316,12 @@ def main():
     args = parser.parse_args()
 
     if args.list_drivers:
-        session = lmu_data.read_session()
+        try:
+            session = lmu_data.read_session()
+        except lmu_data.LayoutMismatch as e:
+            print(f"LMU's shared memory doesn't match the expected layout ({e}).")
+            print("A game update may have changed it; lmu_data.py needs updating.")
+            return
         if session is None:
             print("LMU's shared memory isn't available. Is the game running?")
             return

@@ -75,6 +75,14 @@ min_seconds = 0.3
 # Short beeps when recording starts and stops.
 beep = true
 
+[profanity]
+# Masks swear words and slurs with asterisks before anything is typed. The word
+# list is profanity.txt; add or allow words here, e.g. add = ["bloody", "crap"]
+# or allow = ["piss"]. Whole words only, any case.
+filter = true
+add = []
+allow = []
+
 [corrections]
 # Words Whisper keeps mishearing: "what it wrote" = "what you meant".
 # Whole words only, any case. Quote phrases with spaces: "blue flak" = "blue flag".

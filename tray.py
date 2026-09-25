@@ -224,6 +224,7 @@ class Tray:
             Item("Add driver names to vocabulary", self.toggle("speech", "driver_names"),
                  checked=self.checked("speech", "driver_names")),
             Item("Beep when recording", self.toggle("speech", "beep"), checked=self.checked("speech", "beep")),
+            Item("Filter profanity", self.toggle("profanity", "filter"), checked=self.checked("profanity", "filter")),
             Item("Microphone", Menu(mic_items)),
             Item("Speech model", Menu(lambda: self.radio("speech", "model", MODELS))),
             Item("Chat key", Menu(lambda: self.radio("chat", "open_key", CHAT_KEYS))),

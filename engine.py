@@ -25,7 +25,8 @@ SAMPLE_RATE = 16000
 PREROLL_SECONDS = 0.3  # audio kept from just before the press, so the first word isn't clipped
 DEFAULTS_FILE = Path(__file__).with_name("config.default.toml")  # shipped; never edited by users
 DEFAULT_CONFIG = Path(__file__).with_name("config.toml")  # the user's own settings
-MERGED_TABLES = ("chat", "speech")  # user settings override defaults key by key; other tables replace
+PROFANITY_FILE = Path(__file__).with_name("profanity.txt")  # shipped word list
+MERGED_TABLES = ("chat", "speech", "profanity")  # user settings override defaults key by key; other tables replace
 BETWEEN_MESSAGES_SECONDS = 0.3  # lets the chat box close before a split message's next part
 
 
@@ -93,6 +94,43 @@ def find_microphone(setting: str):
         if dev["max_input_channels"] > 0 and setting.lower() in dev["name"].lower():
             return i
     raise ValueError(f'No microphone matching "{setting}". See --list-mics.')
+
+
+class ProfanityFilter:
+    """Masks listed words with asterisks. Whole words only, any case; a * at either end
+    of a listed word matches any ending or beginning (see profanity.txt)."""
+
+    def __init__(self, words: list[str], allow: list[str]):
+        self.allow = {w.strip().lower() for w in allow}
+        parts = []
+        for word in words:
+            word = word.strip().lower()
+            if not word.strip("*"):
+                continue
+            core = re.escape(word.strip("*"))
+            parts.append((r"\w*" if word.startswith("*") else "") + core + (r"\w*" if word.endswith("*") else ""))
+        self.pattern = re.compile(r"\b(?:" + "|".join(parts) + r")\b", re.IGNORECASE) if parts else None
+
+    @classmethod
+    def from_config(cls, settings: dict) -> "ProfanityFilter":
+        lines = PROFANITY_FILE.read_text(encoding="utf-8").splitlines()
+        words = [line for line in lines if line.strip() and not line.lstrip().startswith("#")]
+        return cls(words + list(settings["add"]), settings["allow"])
+
+    def apply(self, text: str) -> tuple[str, int]:
+        """The text with listed words masked, and how many were masked."""
+        if not self.pattern:
+            return text, 0
+        masked = 0
+
+        def mask(match):
+            nonlocal masked
+            if match.group().lower() in self.allow:
+                return match.group()
+            masked += 1
+            return "*" * len(match.group())
+
+        return self.pattern.sub(mask, text), masked
 
 
 def beep(freq: int):
@@ -192,6 +230,7 @@ class VoiceChat:
         self.on_alert = on_alert
         self.config = self.chat = self.speech = None
         self.corrections = []
+        self.profanity = None  # a ProfanityFilter when [profanity] filter is on
         self.model = None
         self.model_key = None
         self.model_ready = threading.Event()
@@ -234,6 +273,7 @@ class VoiceChat:
             (re.compile(rf"\b{re.escape(heard)}\b", re.IGNORECASE), meant)
             for heard, meant in config.get("corrections", {}).items()
         ]
+        self.profanity = ProfanityFilter.from_config(config["profanity"]) if config["profanity"]["filter"] else None
         if str(binding) != str(self.ptt.binding):
             self.ptt.set_binding(binding)
         if self.recorder is None or mic != self.mic_device:
@@ -347,8 +387,9 @@ class VoiceChat:
             self.jobs.put(audio)
         self.on_change()
 
-    def transcribe(self, audio: np.ndarray) -> tuple[str, int]:
-        """The corrected text, and how many driver names were in the prompt."""
+    def transcribe(self, audio: np.ndarray) -> tuple[str, int, int]:
+        """The corrected, filtered text, how many driver names were in the prompt,
+        and how many words the profanity filter masked."""
         prompt, names = self.build_prompt()
         segments, _ = self.model.transcribe(
             audio,
@@ -360,7 +401,10 @@ class VoiceChat:
         text = " ".join(s.text.strip() for s in segments).strip()
         for pattern, meant in self.corrections:
             text = pattern.sub(lambda _: meant, text)
-        return text, names
+        masked = 0
+        if self.profanity:  # last, so corrections can't bring a word back
+            text, masked = self.profanity.apply(text)
+        return text, names, masked
 
     def send(self, text: str):
         parts = textwrap.wrap(text, self.chat["max_length"], break_on_hyphens=False)
@@ -380,12 +424,16 @@ class VoiceChat:
             try:
                 self.model_ready.wait()  # recordings made while the model loads wait for it
                 started = time.monotonic()
-                text, names = self.transcribe(audio)
+                text, names, masked = self.transcribe(audio)
                 if not text:
                     print("  (heard nothing)")
                     continue
-                name_note = f", {names} driver names" if self.speech["driver_names"] else ""
-                print(f"> {text}  [{time.monotonic() - started:.1f}s{name_note}]")
+                notes = f"{time.monotonic() - started:.1f}s"
+                if self.speech["driver_names"]:
+                    notes += f", {names} driver names"
+                if masked:
+                    notes += f", {masked} masked"
+                print(f"> {text}  [{notes}]")
                 self.last_text = text
                 self.send(text)
             except Exception as e:

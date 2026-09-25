@@ -1,0 +1,68 @@
+# Words the profanity filter masks with asterisks. Shipped with the app: to add
+# or allow words, use [profanity] in config.toml rather than editing this file.
+#
+# One word per line, matched as a whole word in any case. A * at the end also
+# matches any ending (fuck* -> fucking), a * at the start any beginning. Only
+# use wildcards where no ordinary word contains the stem: "cock*" would mask
+# "cockpit" and "*ass" would mask "class", so those are listed as exact words.
+#
+# Mild words (damn, hell, bloody, crap) aren't listed; add them if you like.
+
+# Swearing
+*fuck*
+*shit*
+cunt*
+twat*
+wank*
+bollock*
+bastard*
+bitch*
+arse
+arsehole*
+ass
+asses
+asshole*
+asshat*
+dumbass*
+jackass*
+smartass*
+fatass*
+dick
+dicks
+dickhead*
+cock
+cocks
+cocksucker*
+prick
+pricks
+piss*
+tosser*
+douche*
+whore*
+slut*
+
+# Slurs
+nigger*
+nigga*
+faggot*
+fag
+fags
+retard*
+spastic*
+spaz*
+tranny
+trannies
+chink*
+gook*
+kike*
+paki
+pakis
+wetback*
+coon
+coons
+dyke*
+beaner*
+towelhead*
+raghead*
+gypo*
+gyppo*

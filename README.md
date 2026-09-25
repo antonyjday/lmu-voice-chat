@@ -8,6 +8,8 @@ PC (Whisper, no cloud) and typed into Le Mans Ultimate's chat.
 - Adds the names of the drivers in your session, nearest on track first.
 - Opens chat with the key you've bound in LMU, and splits messages longer than
   LMU's 119-character limit.
+- Masks swear words and slurs with asterisks (on by default; the list is
+  `profanity.txt`, and `[profanity]` in config.toml adds or allows words).
 
 Windows only.
 
@@ -28,7 +30,7 @@ red recording, amber transcribing, grey loading, crossed out paused.
 ## Settings
 
 Right-click the tray icon for push-to-talk, pause, sending messages
-automatically, driver names, beeps, microphone, speech model, chat key and
+automatically, driver names, beeps, the profanity filter, microphone, speech model, chat key and
 starting with Windows. Changes apply straight away.
 
 Everything else is in `config.toml` (**Edit settings file** in the menu), created

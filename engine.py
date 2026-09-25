@@ -115,7 +115,9 @@ class ProfanityFilter:
     def from_config(cls, settings: dict) -> "ProfanityFilter":
         lines = PROFANITY_FILE.read_text(encoding="utf-8").splitlines()
         words = [line for line in lines if line.strip() and not line.lstrip().startswith("#")]
-        return cls(words + list(settings["add"]), settings["allow"])
+        # add = "crap" instead of ["crap"] must not become the letters c, r, a, p.
+        as_list = lambda value: [value] if isinstance(value, str) else list(value)
+        return cls(words + as_list(settings["add"]), as_list(settings["allow"]))
 
     def apply(self, text: str) -> tuple[str, int]:
         """The text with listed words masked, and how many were masked."""
@@ -156,7 +158,8 @@ class Recorder:
         with self._lock:
             if self._recording:
                 self._chunks.append(chunk)
-                return
+            # Kept up to date while recording too, so a quick re-press doesn't
+            # start with audio from before the previous press.
             self._preroll.append(chunk)
             self._preroll_frames += len(chunk)
             while self._preroll_frames - len(self._preroll[0]) >= PREROLL_SECONDS * SAMPLE_RATE:
@@ -231,13 +234,19 @@ class VoiceChat:
         self.config = self.chat = self.speech = None
         self.corrections = []
         self.profanity = None  # a ProfanityFilter when [profanity] filter is on
+        self.apply_lock = threading.Lock()  # apply() runs from the menu, the config watcher and capture
         self.model = None
-        self.model_key = None
-        self.model_ready = threading.Event()
+        self.model_key = None  # the model settings wanted
+        self.loaded_key = None  # the model settings of self.model
+        self.model_error = None  # why the wanted model failed to load
+        self.model_ready = threading.Event()  # set once a model is usable; stays set during a switch
+        self.loading = False  # a model is loading (the previous one, if any, is still used)
         self.recorder = None
+        self.active_recorder = None  # the one recording, which apply() may have replaced since
         self.mic_device = None
         self.recording = False
         self.pending = 0  # recordings queued or being transcribed
+        self.pending_lock = threading.Lock()
         self.last_text = ""
         self.ptt_status = ""
         self.names_problem = None  # last driver-names warning shown, so it isn't repeated
@@ -249,12 +258,14 @@ class VoiceChat:
 
     @property
     def state(self) -> str:
-        """"paused", "recording", "loading", "working" or "ready"."""
+        """"error", "paused", "recording", "loading", "working" or "ready"."""
+        if self.config is None or (self.model is None and self.model_error):
+            return "error"
         if self.ptt.paused:
             return "paused"
         if self.recording:
             return "recording"
-        if not self.model_ready.is_set():
+        if self.loading or not self.model_ready.is_set():
             return "loading"
         return "working" if self.pending else "ready"
 
@@ -264,51 +275,77 @@ class VoiceChat:
 
     def apply(self, config: dict):
         """Uses new settings. Rebinds push-to-talk, reopens the microphone or reloads the
-        model only when those changed. Raises ValueError for a bad binding or microphone."""
-        binding = ptt.parse_binding(config["ptt_button"])
-        mic = find_microphone(config["speech"]["microphone"])
-        self.config, self.chat, self.speech = config, config["chat"], config["speech"]
-        # Whole words, any case: "Mac" = "Merc" fixes "mac" and "Mac's" but not "Macca".
-        self.corrections = [
-            (re.compile(rf"\b{re.escape(heard)}\b", re.IGNORECASE), meant)
-            for heard, meant in config.get("corrections", {}).items()
-        ]
-        self.profanity = ProfanityFilter.from_config(config["profanity"]) if config["profanity"]["filter"] else None
-        if str(binding) != str(self.ptt.binding):
-            self.ptt.set_binding(binding)
-        if self.recorder is None or mic != self.mic_device:
-            old, self.recorder, self.mic_device = self.recorder, Recorder(mic), mic
-            if old:
-                old.close()
-        key = (self.speech["model"], self.speech["device"], self.speech["compute_type"])
-        if key != self.model_key:
-            self.model_key = key
-            threading.Thread(target=self.load_model, args=(key,), daemon=True).start()
-        elif self.model:
-            self.check_vocabulary()
+        model only when those changed. Everything that can fail is prepared before anything
+        changes, so a bad setting raises and leaves the previous settings working."""
+        with self.apply_lock:
+            binding = ptt.parse_binding(config["ptt_button"])
+            mic = find_microphone(config["speech"]["microphone"])
+            # Whole words, any case: "Mac" = "Merc" fixes "mac" and "Mac's" but not "Macca".
+            corrections = [
+                (re.compile(rf"\b{re.escape(heard)}\b", re.IGNORECASE), meant)
+                for heard, meant in config.get("corrections", {}).items()
+            ]
+            profanity = ProfanityFilter.from_config(config["profanity"]) if config["profanity"]["filter"] else None
+            recorder = Recorder(mic) if self.recorder is None or mic != self.mic_device else None
+            try:
+                if str(binding) != str(self.ptt.binding):
+                    self.ptt.set_binding(binding)  # raises for a key name it doesn't know
+            except Exception:
+                if recorder:
+                    recorder.close()
+                raise
+            self.config, self.chat, self.speech = config, config["chat"], config["speech"]
+            self.corrections, self.profanity = corrections, profanity
+            if recorder:
+                old, self.recorder, self.mic_device = self.recorder, recorder, mic
+                if old:
+                    old.close()
+            key = (self.speech["model"], self.speech["device"], self.speech["compute_type"])
+            if key != self.model_key:
+                self.model_key, self.model_error = key, None
+                threading.Thread(target=self.load_model, args=(key,), daemon=True).start()
+            elif self.model:
+                self.check_vocabulary()
         self.on_change()
 
     def load_model(self, key: tuple):
         from faster_whisper import WhisperModel  # slow import; only needed when running
 
-        self.model_ready.clear()
+        self.loading = True
         self.on_change()
         print(f"Loading speech model {key[0]} (first run downloads it)...")
         try:
-            model = WhisperModel(key[0], device=key[1], compute_type=key[2])
+            model, error = WhisperModel(key[0], device=key[1], compute_type=key[2]), None
         except Exception as e:
-            self.alert(f"Couldn't load speech model {key[0]}: {e}")
+            model, error = None, f"Couldn't load speech model {key[0]}: {e}"
+        with self.apply_lock:
+            if key != self.model_key:
+                return  # another model was chosen while this one loaded; its thread reports
+            self.loading = False
+            if error:
+                # Forget the failed choice, so saving the same settings again retries it.
+                self.model_key, self.model_error = self.loaded_key, error
+            else:
+                self.model, self.loaded_key = model, key
+                self.check_vocabulary()
             if self.model:
-                self.model_ready.set()  # keep using the previous one
-            self.on_change()
-            return
-        if key != self.model_key:
-            return  # another model was chosen while this one loaded
-        self.model = model
-        self.check_vocabulary()
-        self.model_ready.set()
-        print(f"Speech model {key[0]} ready")
+                self.model_ready.set()  # the new model, or the previous one if this failed
+        if error:
+            self.alert(error)
+        else:
+            print(f"Speech model {key[0]} ready")
         self.on_change()
+
+    def wait_for_model(self) -> bool:
+        """Waits while a model loads. False if none could be loaded."""
+        while not self.model_ready.wait(0.2):
+            if self.model is None and self.model_error:
+                return False
+        return True
+
+    def add_pending(self, change: int):
+        with self.pending_lock:
+            self.pending += change
 
     def close(self):
         self.ptt.set_binding(None)
@@ -371,19 +408,21 @@ class VoiceChat:
         return prompt, used
 
     def on_press(self):
-        self.recorder.start()
+        # Remembered, so the release stops this recorder even if apply() swapped in a new one.
+        self.active_recorder = self.recorder
+        self.active_recorder.start()
         self.recording = True
         if self.speech["beep"]:
             beep(880)
         self.on_change()
 
     def on_release(self):
-        audio = self.recorder.stop()
+        audio = self.active_recorder.stop()
         self.recording = False
         if self.speech["beep"]:
             beep(660)
         if len(audio) - PREROLL_SECONDS * SAMPLE_RATE >= self.speech["min_seconds"] * SAMPLE_RATE:
-            self.pending += 1
+            self.add_pending(1)
             self.jobs.put(audio)
         self.on_change()
 
@@ -422,7 +461,9 @@ class VoiceChat:
         while True:
             audio = self.jobs.get()
             try:
-                self.model_ready.wait()  # recordings made while the model loads wait for it
+                if not self.wait_for_model():  # recordings made while the first model loads wait
+                    print("  dropped a recording: no speech model could be loaded")
+                    continue
                 started = time.monotonic()
                 text, names, masked = self.transcribe(audio)
                 if not text:
@@ -439,5 +480,5 @@ class VoiceChat:
             except Exception as e:
                 print(f"  error: {e!r}")
             finally:
-                self.pending -= 1
+                self.add_pending(-1)
                 self.on_change()

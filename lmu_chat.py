@@ -6,6 +6,7 @@ the icon for settings. The options below are one-off commands for the console.
 """
 import argparse
 import ctypes
+import os
 import sys
 import threading
 import time
@@ -22,31 +23,52 @@ LENGTH_TEST_CHARS = 300  # well past rFactor 2's rumoured 128
 ERROR_ALREADY_EXISTS = 183
 
 
-class Tee:
-    """Writes to the console (if there is one) and the log file, with a time on each line."""
+class Log:
+    """The log file, shared by stdout and stderr: one lock, so lines from different
+    threads don't interleave, and a time at the start of each line."""
 
-    def __init__(self, console, log):
-        self.console, self.log = console, log
+    def __init__(self, path: Path):
+        self.file = open(path, "w", encoding="utf-8")
+        self.lock = threading.Lock()
         self.line_start = True
 
     def write(self, text: str):
+        with self.lock:
+            for line in text.splitlines(keepends=True):
+                if self.line_start:
+                    self.file.write(time.strftime("%H:%M:%S "))
+                self.file.write(line)
+                self.line_start = line.endswith("\n")
+            self.file.flush()
+
+
+class Tee:
+    """Stands in for sys.stdout or sys.stderr: writes to the console, if there is one
+    (there isn't under pythonw.exe), and to the log."""
+
+    encoding = "utf-8"
+
+    def __init__(self, console, log: Log):
+        self.console, self.log = console, log
+
+    def write(self, text: str) -> int:
         if self.console:
             self.console.write(text)
             self.console.flush()
-        for line in text.splitlines(keepends=True):
-            if self.line_start:
-                self.log.write(time.strftime("%H:%M:%S "))
-            self.log.write(line)
-            self.line_start = line.endswith("\n")
-        self.log.flush()
+        self.log.write(text)
+        return len(text)
 
     def flush(self):
         pass
 
+    def isatty(self) -> bool:
+        return False
+
 
 def start_log():
-    log = open(LOG_FILE, "w", encoding="utf-8")
-    sys.stdout = Tee(sys.stdout, log)  # sys.stdout is None under pythonw.exe
+    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"  # download progress would flood the log
+    log = Log(LOG_FILE)
+    sys.stdout = Tee(sys.stdout, log)
     sys.stderr = Tee(sys.stderr, log)
 
 

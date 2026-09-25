@@ -3,7 +3,6 @@ import subprocess
 import sys
 import threading
 import time
-import tomllib
 import winreg
 from pathlib import Path
 
@@ -23,6 +22,7 @@ STATE_COLOURS = {
     "recording": (211, 47, 47),
     "working": (245, 166, 35),
     "paused": (90, 90, 90),
+    "error": (40, 40, 40),
 }
 STATE_TEXT = {
     "loading": "Loading speech model...",
@@ -30,6 +30,7 @@ STATE_TEXT = {
     "recording": "Recording...",
     "working": "Transcribing...",
     "paused": "Paused",
+    "error": "Not working: {problem}",
 }
 MODELS = [("tiny.en", "Tiny (fastest)"), ("base.en", "Base"), ("small.en", "Small (recommended)"),
           ("medium.en", "Medium (most accurate, slowest)")]
@@ -43,6 +44,10 @@ def icon_image(state: str) -> Image.Image:
     d = ImageDraw.Draw(img)
     d.ellipse((0, 0, 63, 63), fill=STATE_COLOURS[state])
     white = (255, 255, 255)
+    if state == "error":  # an exclamation mark instead of the microphone
+        d.rounded_rectangle((27, 10, 37, 40), radius=4, fill=(255, 193, 7))
+        d.ellipse((27, 45, 37, 55), fill=(255, 193, 7))
+        return img
     d.rounded_rectangle((24, 10, 40, 38), radius=8, fill=white)  # capsule
     d.arc((17, 20, 47, 46), start=0, end=180, fill=white, width=4)  # holder
     d.line((32, 46, 32, 53), fill=white, width=4)  # stand
@@ -86,7 +91,11 @@ class Tray:
         self.log_file = log_file
         self.created_config = engine.ensure_config(config_path)
         self.config_mtime = None
+        self.settings_error = None  # why config.toml couldn't be applied
+        self.reload_lock = threading.Lock()  # reloads come from the menu, the watcher and capture
         self.refresh_lock = threading.Lock()
+        self.shown = None  # what the icon and menu last showed, to skip redundant updates
+        self.capturing = False
         self.mics = engine.input_devices()
         self.app = engine.VoiceChat(any_window, on_change=self.refresh, on_alert=self.notify)
         self.icon = pystray.Icon(APP_NAME, icon_image("loading"), APP_NAME, menu=self.menu())
@@ -109,16 +118,24 @@ class Tray:
         return binding.describe() if binding else "nothing"
 
     def status_text(self) -> str:
-        return STATE_TEXT[self.app.state].format(binding=self.binding_text())
+        problem = self.settings_error or self.app.model_error or "see the log"
+        return STATE_TEXT[self.app.state].format(binding=self.binding_text(), problem=problem)
 
     def refresh(self):
         icon = getattr(self, "icon", None)
         if icon is None:  # the engine reported something before the icon exists
             return
         with self.refresh_lock:  # called from the push-to-talk, worker and menu threads
-            icon.icon = icon_image(self.app.state)
-            icon.title = f"{APP_NAME}: {self.status_text()}"[:127]
-            icon.update_menu()
+            state, status = self.app.state, self.status_text()
+            shown = (state, status, self.settings_error, self.app.ptt_status, self.app.last_text, id(self.app.config),
+                     autostart_enabled())
+            if shown == self.shown:
+                return
+            if self.shown is None or state != self.shown[0]:
+                icon.icon = icon_image(state)
+            icon.title = f"{APP_NAME}: {status}"[:127]
+            icon.update_menu()  # rebuilds the whole menu, so only when something in it changed
+            self.shown = shown
 
     def notify(self, message: str):
         print(message)
@@ -130,13 +147,20 @@ class Tray:
 
     # ---- settings ---------------------------------------------------------------
 
-    def reload(self):
-        """Loads config.toml and applies it."""
-        try:
-            self.config_mtime = self.config_path.stat().st_mtime
-            self.app.apply(engine.load_config(self.config_path))
-        except (ValueError, OSError, tomllib.TOMLDecodeError) as e:
-            self.notify(f"Settings problem: {e}")
+    def reload(self, only_if_changed: bool = False):
+        """Loads config.toml and applies it. A problem is shown, never raised: this runs
+        on the menu, watcher and capture threads, and an exception would end them."""
+        with self.reload_lock:
+            try:
+                mtime = self.config_path.stat().st_mtime
+                if only_if_changed and mtime == self.config_mtime:
+                    return
+                self.config_mtime = mtime
+                self.app.apply(engine.load_config(self.config_path))
+                self.settings_error = None
+            except Exception as e:
+                self.settings_error = str(e)
+                self.notify(f"Settings problem: {e}")
         self.refresh()
 
     def watch_config(self):
@@ -148,8 +172,7 @@ class Tray:
             except OSError:
                 continue
             if mtime != self.config_mtime:
-                print("config.toml changed; reloading")
-                self.reload()
+                self.reload(only_if_changed=True)  # re-checked under the lock: a menu change may have just reloaded
 
     def set_option(self, key: str, value, table: str | None = None):
         engine.save_setting(self.config_path, key, value, table)
@@ -175,11 +198,16 @@ class Tray:
     # ---- menu actions -----------------------------------------------------------
 
     def set_ptt(self):
-        threading.Thread(target=self._capture_ptt, daemon=True).start()
+        if not self.capturing:  # a second click while waiting would start a competing capture
+            self.capturing = True
+            threading.Thread(target=self._capture_ptt, daemon=True).start()
 
     def _capture_ptt(self):
         self.notify("Press the key or wheel button to use for push-to-talk (Esc cancels).")
-        binding = self.app.ptt.capture(timeout=30)
+        try:
+            binding = self.app.ptt.capture(timeout=30)
+        finally:
+            self.capturing = False
         if binding is None:
             self.notify(f"Push-to-talk unchanged: {self.binding_text()}.")
             return
@@ -211,6 +239,8 @@ class Tray:
 
         return Menu(
             Item(lambda item: self.status_text(), None, enabled=False),
+            Item(lambda item: "Settings problem: " + shorten(self.settings_error or ""), None, enabled=False,
+                 visible=lambda item: bool(self.settings_error)),
             Item(lambda item: self.app.ptt_status, None, enabled=False,
                  visible=lambda item: bool(self.app.ptt_status)),
             Item(lambda item: "Last: " + shorten(self.app.last_text), None, enabled=False,

@@ -90,15 +90,30 @@ class PushToTalk:
         return self._binding
 
     def set_binding(self, binding: Binding | None):
+        """Raises ValueError for a key name the keyboard library doesn't know, leaving the
+        previous binding in place."""
         with self._lock:
+            new_hook = None
+            if binding and binding.kind == "key":
+                # keyboard.hook_key also files hooks under the key name, so two hooks on one key
+                # break each other's removal. A plain hook filtered by scan code avoids that.
+                try:  # first, as this can fail
+                    codes = set(keyboard.key_to_scan_codes(binding.key))
+                except ValueError:
+                    raise ValueError(f'"{binding.key}" isn\'t a key name the app knows. '
+                                     "Set push-to-talk again from the tray menu.") from None
+
+                def on_event(event):
+                    if event.scan_code in codes:
+                        self._on_key(event)
+
+                new_hook = keyboard.hook(on_event)
             self._set_held(False)
             if self._remove_key_hook:
                 self._remove_key_hook()
-                self._remove_key_hook = None
+            self._remove_key_hook = new_hook
             self._binding = binding
             self._last_status = None
-            if binding and binding.kind == "key":
-                self._remove_key_hook = keyboard.hook_key(binding.key, self._on_key)
 
     @property
     def paused(self) -> bool:

@@ -38,23 +38,37 @@ CHAT_KEYS = [("auto", "LMU's chat key (automatic)"), ("enter", "Enter"), ("t", "
              ("", "None: I open chat myself")]
 
 
-def icon_image(state: str) -> Image.Image:
-    """A coloured disc with a white microphone; the colour shows the state."""
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+def icon_image(state: str, size: int = 64) -> Image.Image:
+    """A coloured disc with a white microphone; the colour shows the state.
+    Drawn on a 64-unit grid, scaled to `size` pixels."""
+    k = size / 64
+
+    def box(*xy):
+        return [round(v * k) for v in xy]
+
+    def px(n):
+        return max(1, round(n * k))
+
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    d.ellipse((0, 0, 63, 63), fill=STATE_COLOURS[state])
+    d.ellipse((0, 0, size - 1, size - 1), fill=STATE_COLOURS[state])
     white = (255, 255, 255)
     if state == "error":  # an exclamation mark instead of the microphone
-        d.rounded_rectangle((27, 10, 37, 40), radius=4, fill=(255, 193, 7))
-        d.ellipse((27, 45, 37, 55), fill=(255, 193, 7))
+        d.rounded_rectangle(box(27, 10, 37, 40), radius=px(4), fill=(255, 193, 7))
+        d.ellipse(box(27, 45, 37, 55), fill=(255, 193, 7))
         return img
-    d.rounded_rectangle((24, 10, 40, 38), radius=8, fill=white)  # capsule
-    d.arc((17, 20, 47, 46), start=0, end=180, fill=white, width=4)  # holder
-    d.line((32, 46, 32, 53), fill=white, width=4)  # stand
-    d.line((23, 54, 41, 54), fill=white, width=4)  # base
+    d.rounded_rectangle(box(24, 10, 40, 38), radius=px(8), fill=white)  # capsule
+    d.arc(box(17, 20, 47, 46), start=0, end=180, fill=white, width=px(4))  # holder
+    d.line(box(32, 46, 32, 53), fill=white, width=px(4))  # stand
+    d.line(box(23, 54, 41, 54), fill=white, width=px(4))  # base
     if state == "paused":
-        d.line((12, 12, 52, 52), fill=white, width=5)
+        d.line(box(12, 12, 52, 52), fill=white, width=px(5))
     return img
+
+
+def save_icon_file(path: Path):
+    """The shortcut icon (the "ready" state) as a multi-size .ico; the installer calls this."""
+    icon_image("ready", 256).save(path, sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)])
 
 
 def shorten(text: str, width: int = 60) -> str:
@@ -269,3 +283,8 @@ class Tray:
             Menu.SEPARATOR,
             Item("Quit", self.quit),
         )
+
+
+if __name__ == "__main__":  # the installer: python tray.py --icon <path.ico>
+    if len(sys.argv) == 3 and sys.argv[1] == "--icon":
+        save_icon_file(Path(sys.argv[2]))

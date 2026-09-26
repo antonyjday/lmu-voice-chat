@@ -1,0 +1,7 @@
+# Windows scripts need CRLF, also in GitHub's own zip downloads.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+# Not needed in release zips.
+.gitattributes export-ignore
+.gitignore export-ignore
+release.ps1 export-ignore

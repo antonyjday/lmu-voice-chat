@@ -13,16 +13,27 @@ PC (Whisper, no cloud) and typed into Le Mans Ultimate's chat.
 
 Windows only.
 
-## Setup
+## Install
 
-1. Install Python 3.12 if you don't have it: `winget install Python.Python.3.12`
-   (or from [python.org](https://www.python.org/downloads/), with the "py launcher" ticked).
-2. Run `setup.bat`.
-3. Run `run.bat`. The app starts in the system tray (on Windows 11, new tray
-   icons start in the overflow behind the `^` arrow; drag it onto the taskbar to
-   keep it visible). The first start downloads the speech model (about 250 MB).
-4. Right-click the icon > **Set push-to-talk button...** and press the key or
+1. Download `LMU-Voice-Chat-<version>.zip` from the latest release on the
+   [Releases page](../../releases) and extract it (right-click > Extract All).
+2. Double-click **Install LMU Voice Chat.bat**. If Windows asks whether to run
+   it, choose Run. The installer sets everything up for your Windows account
+   (no admin rights needed): it installs Python 3.12 if you don't have it,
+   downloads the speech model (about 250 MB), adds **LMU Voice Chat** to the
+   Start Menu and desktop, and starts the app. The first install takes a few
+   minutes. The extracted folder isn't needed afterwards.
+3. The app runs in the system tray (on Windows 11, new tray icons start in the
+   overflow behind the `^` arrow; drag it onto the taskbar to keep it visible).
+   Right-click the icon > **Set push-to-talk button...** and press the key or
    wheel button you want. It's F9 until you do.
+
+The app is installed in `%LOCALAPPDATA%\Programs\LMU Voice Chat`.
+
+**Updating:** download the new release and run its installer. Your settings are kept.
+
+**Uninstalling:** Settings > Apps > Installed apps > LMU Voice Chat > Uninstall.
+This also deletes your settings; it asks before deleting the speech models.
 
 Leave it running while you race. The icon shows what it's doing: green ready,
 red recording, amber transcribing, grey loading, crossed out paused.
@@ -39,8 +50,11 @@ defaults; don't edit that one. **Open log** shows what the app heard and typed.
 
 ## Commands
 
+For troubleshooting, in a command prompt in the app's folder
+(`cd /d "%LOCALAPPDATA%\Programs\LMU Voice Chat"`):
+
 ```
-run.bat                      start in the tray
+run.bat                      start in the tray (same as the shortcut)
 run.bat --console            start, with a console showing the log
 run.bat --any-window         start, typing into any window (to test in Notepad)
 run.bat --bind               set the push-to-talk key or wheel button
@@ -48,7 +62,12 @@ run.bat --list-mics          microphones, for `microphone` in config.toml
 run.bat --list-controllers   connected wheels and button boxes
 run.bat --list-drivers       driver names read from LMU (the game must be running)
 run.bat --length-test        type a numbered ruler into chat (unsent) to measure its limit
+run.bat --version            show the installed version
 ```
+
+For development, work in a git clone and run `powershell -ExecutionPolicy Bypass -File install.ps1 -Here` there: it sets
+up that folder (and points the shortcuts at it) instead of copying it. Build a
+release zip with `release.ps1`.
 
 ## Troubleshooting
 
@@ -87,8 +106,8 @@ This app builds on:
   [tomlkit](https://github.com/python-poetry/tomlkit) (MIT) and
   [NumPy](https://numpy.org) (BSD)
 
-None of these are included in this repository: `setup.bat` installs them from
-PyPI, and the speech model downloads from Hugging Face on first start. Each is
+None of these are included in this repository: the installer downloads them from
+PyPI, and the speech model from Hugging Face. Each is
 covered by its own licence.
 
 Not affiliated with or endorsed by Studio 397 or Motorsport Games. Le Mans

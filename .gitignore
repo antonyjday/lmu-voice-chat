@@ -6,3 +6,6 @@ config.toml
 DEV_NOTES.md
 # Written by the app each run.
 lmu_chat.log
+# Made by the installer and release.ps1.
+lmu_chat.ico
+dist/

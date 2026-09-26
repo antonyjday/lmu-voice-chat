@@ -1,6 +1,6 @@
 @echo off
 if not exist "%~dp0.venv\Scripts\python.exe" (
-    echo Not set up yet. Run setup.bat first.
+    echo Not set up yet. Run "Install LMU Voice Chat.bat" first.
     exit /b 1
 )
 rem No arguments: start in the tray without a console window. With arguments

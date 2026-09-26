@@ -19,6 +19,7 @@ import lmu_data
 import ptt
 
 LOG_FILE = Path(__file__).with_name("lmu_chat.log")
+VERSION = Path(__file__).with_name("VERSION").read_text(encoding="utf-8").strip()
 LENGTH_TEST_CHARS = 300  # well past rFactor 2's rumoured 128
 ERROR_ALREADY_EXISTS = 183
 
@@ -70,6 +71,7 @@ def start_log():
     log = Log(LOG_FILE)
     sys.stdout = Tee(sys.stdout, log)
     sys.stderr = Tee(sys.stderr, log)
+    print(f"LMU Voice Chat {VERSION}")
 
 
 _instance_mutex = None
@@ -128,8 +130,19 @@ def list_drivers():
         print(f"  {name}")
 
 
+def download_model(config: dict):
+    """Downloads the configured speech model now (with progress), so the first start is quick."""
+    from faster_whisper import download_model as download  # slow import
+
+    model = config["speech"]["model"]
+    print(f"Downloading speech model {model} (if not already downloaded)...")
+    download(model)
+    print(f"Speech model {model} ready.")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--version", action="version", version=f"LMU Voice Chat {VERSION}")
     parser.add_argument("--config", type=Path, default=engine.DEFAULT_CONFIG)
     parser.add_argument("--console", action="store_true", help="run the app with this console showing the log")
     parser.add_argument("--any-window", action="store_true", help="type into any window (for testing in Notepad)")
@@ -138,6 +151,7 @@ def main():
     parser.add_argument("--list-controllers", action="store_true", help="list wheels, button boxes and joysticks")
     parser.add_argument("--list-drivers", action="store_true", help="show the driver names read from LMU, nearest first")
     parser.add_argument("--length-test", action="store_true", help="type a numbered ruler into chat to find its length limit")
+    parser.add_argument("--download-model", action="store_true", help="download the speech model now (the installer runs this)")
     args = parser.parse_args()
 
     if args.list_drivers:
@@ -164,6 +178,9 @@ def main():
             return
         engine.save_binding(args.config, binding)
         print(f'Saved ptt_button = "{binding}" to {args.config}')
+        return
+    if args.download_model:
+        download_model(engine.load_config(args.config))
         return
     if args.length_test:
         config = engine.load_config(args.config)

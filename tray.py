@@ -181,6 +181,11 @@ class Tray:
     def option(self, table: str, key: str):
         return (self.app.config or {}).get(table, {}).get(key)
 
+    # Actions take no arguments: pystray counts a callback's parameters (defaults included)
+    # and passes the icon to a one-parameter one, so `lambda v=value:` would get the icon.
+    def choose(self, table: str, key: str, value):
+        return lambda: self.set_option(key, value, table)
+
     def toggle(self, table: str, key: str):
         return lambda: self.set_option(key, not self.option(table, key), table)
 
@@ -191,8 +196,7 @@ class Tray:
         current = self.option(table, key)
         if current is not None and current not in [value for value, _ in choices]:
             choices = [(current, f"{current} (from settings)")] + choices
-        return [Item(label, (lambda v=value: self.set_option(key, v, table)),
-                     checked=self.checked(table, key, value), radio=True)
+        return [Item(label, self.choose(table, key, value), checked=self.checked(table, key, value), radio=True)
                 for value, label in choices]
 
     # ---- menu actions -----------------------------------------------------------

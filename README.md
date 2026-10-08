@@ -90,6 +90,8 @@ used in online lobbies with Easy Anti-Cheat running.
 
 ## Credits and licences
 
+LMU Voice Chat is released under the [MIT licence](LICENSE).
+
 This app builds on:
 
 - [OpenAI Whisper](https://github.com/openai/whisper) speech recognition (MIT),
